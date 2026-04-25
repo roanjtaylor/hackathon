@@ -313,6 +313,16 @@ HARD RULES — non-negotiable:
 5. Each \`next_action.text\` must be specific and time-boxed within 7 days.
    Bad: "validate market". Good: "Talk to 10 target users by Friday."
    \`deadline_days\` is an integer 1–7.
+5a. SCORING — every question gets an integer \`score\` 0–100 that MUST sit
+   inside the band implied by its grade:
+     RED    →  0–39   (use 0–15 for "no signal at all", 25–39 for "weak gestures")
+     YELLOW → 40–69   (use 40–55 for "barely yellow", 56–69 for "almost green")
+     GREEN  → 70–100  (use 70–84 for "solid green", 85–100 for "exemplary canon-grade")
+   Use the full range — do not anchor every answer at the midpoint. The
+   score is what differentiates two startups with the same colour. If
+   \`grade\` is null, \`score\` is null. The overall hackathon score is
+   computed downstream as the average of the six \`score\` values, so be
+   honest and discriminating.
 6. Comparables must be drawn from the COMPARABLES block, character-for-
    character on the company name, situation, action, result, lesson, url.
    Do not invent company anecdotes. Pick 2–3 most relevant. If the

@@ -71,6 +71,9 @@ export type Company = z.infer<typeof Company>;
 
 export const QuestionGrade = z.object({
   grade: Grade.nullable(),
+  // Hackathon score for this question, 0–100. Must align with the grade band:
+  // red 0–39, yellow 40–69, green 70–100. Null only if grade is null.
+  score: z.number().int().min(0).max(100).nullable(),
   quote: z.string().nullable(),
   source_title: z.string().nullable(),
   source_url: z.string().nullable(),
@@ -78,6 +81,20 @@ export const QuestionGrade = z.object({
   next_actions: z.array(NextAction).min(1).max(2),
 });
 export type QuestionGrade = z.infer<typeof QuestionGrade>;
+
+// Overall hackathon verdict bands, derived from the average of question scores.
+export const OverallBand = z.enum(["strong", "promising", "shaky", "weak"]);
+export type OverallBand = z.infer<typeof OverallBand>;
+
+export const OverallScore = z.object({
+  // 0–100 average of the six question scores, rounded to nearest integer.
+  score: z.number().int().min(0).max(100),
+  band: OverallBand,
+  // Per-question breakdown for leaderboard sorting/comparison without
+  // re-walking the questions object on the client.
+  breakdown: z.record(z.string(), z.number().int().min(0).max(100)),
+});
+export type OverallScore = z.infer<typeof OverallScore>;
 
 export const ComparableRef = z.object({
   company: z.string().min(1),
@@ -111,3 +128,10 @@ export const AnalyzerOutput = z.object({
   prescribed_reading: z.array(PrescribedRead).min(2).max(3),
 });
 export type AnalyzerOutput = z.infer<typeof AnalyzerOutput>;
+
+// Server-augmented output: the LLM-produced AnalyzerOutput plus the
+// deterministically computed overall hackathon score.
+export const ScoredAnalyzerOutput = AnalyzerOutput.extend({
+  overall: OverallScore,
+});
+export type ScoredAnalyzerOutput = z.infer<typeof ScoredAnalyzerOutput>;

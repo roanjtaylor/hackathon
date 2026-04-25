@@ -6,6 +6,9 @@ import {
   Diagnosis,
   FormInput,
   QUESTION_KEYS,
+  type Grade,
+  type OverallBand,
+  type OverallScore,
   type QuestionKey,
 } from "../src/lib/schema.js";
 import {
@@ -35,6 +38,60 @@ const ANALYZER_TOOL = {
 };
 
 const anthropic = new Anthropic();
+
+// Score band ranges, must match the rubric in prompts.ts (rule 5a).
+const SCORE_BAND: Record<Grade, [number, number]> = {
+  red: [0, 39],
+  yellow: [40, 69],
+  green: [70, 100],
+};
+
+function findScoreBandViolations(
+  output: ReturnType<typeof AnalyzerOutput.parse>,
+): string[] {
+  const violations: string[] = [];
+  for (const key of QUESTION_KEYS) {
+    const { grade, score } = output.questions[key];
+    if (grade === null) {
+      if (score !== null) {
+        violations.push(`${key}: grade is null but score is ${score} — must also be null`);
+      }
+      continue;
+    }
+    if (score === null) {
+      violations.push(`${key}: grade is ${grade} but score is null — must be in ${SCORE_BAND[grade].join("–")}`);
+      continue;
+    }
+    const [lo, hi] = SCORE_BAND[grade];
+    if (score < lo || score > hi) {
+      violations.push(`${key}: score ${score} outside ${grade} band ${lo}–${hi}`);
+    }
+  }
+  return violations;
+}
+
+function computeOverall(
+  output: ReturnType<typeof AnalyzerOutput.parse>,
+): OverallScore {
+  const breakdown: Record<string, number> = {};
+  const scores: number[] = [];
+  for (const key of QUESTION_KEYS) {
+    const s = output.questions[key].score;
+    // Treat null (ungraded) as 0 — the founder gets no credit for a
+    // question the grader couldn't assess. The rubric forces a grade
+    // in normal flow, so this is a defensive default.
+    const value = s ?? 0;
+    breakdown[key] = value;
+    scores.push(value);
+  }
+  const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+  let band: OverallBand;
+  if (avg >= 75) band = "strong";
+  else if (avg >= 55) band = "promising";
+  else if (avg >= 35) band = "shaky";
+  else band = "weak";
+  return { score: avg, band, breakdown };
+}
 
 function findVerbatimViolations(
   output: ReturnType<typeof AnalyzerOutput.parse>,
@@ -214,8 +271,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       continue;
     }
 
+    const scoreViolations = findScoreBandViolations(validated.data);
+    if (scoreViolations.length > 0) {
+      lastError = `Per-question score is inconsistent with its grade band — fix scores so red is 0–39, yellow 40–69, green 70–100:\n${scoreViolations.join("\n")}`;
+      console.warn("[analyze] score band check failed on attempt", attempt, scoreViolations);
+      continue;
+    }
+
+    const overall = computeOverall(validated.data);
+
     res.status(200).json({
-      output: validated.data,
+      output: { ...validated.data, overall },
       meta: {
         diagnosis,
         chunks_used: allChunks.length,
