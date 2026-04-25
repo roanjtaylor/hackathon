@@ -6,7 +6,9 @@
       "Bash(npm run *)",
       "WebSearch",
       "Bash(npx tsc *)",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "Bash(mkdir -p docs)",
+      "Bash(git mv *)"
     ]
   }
 }
