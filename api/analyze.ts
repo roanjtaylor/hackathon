@@ -3,28 +3,34 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { z } from "zod";
 import {
   AnalyzerOutput,
+  Diagnosis,
   FormInput,
-  SECTION_KEYS,
-  type SectionKey,
+  QUESTION_KEYS,
+  type QuestionKey,
 } from "../src/lib/schema.js";
 import {
+  WORLDVIEW_PROMPT,
+  buildComparablesBlock,
+  buildDiagnosePrompt,
+  buildGraderSystemPrompt,
+  buildGraderUserMessage,
   buildSourcesBlock,
-  buildSystemPrompt,
-  buildUserMessage,
 } from "../src/lib/prompts.js";
 import {
   dedupeChunks,
+  retrieveComparables,
   retrieveForSection,
   type Chunk,
 } from "../src/lib/retrieval.js";
 
 const MODEL = "claude-sonnet-4-6";
-const MAX_TOKENS = 4096;
+const PHASE1_MAX_TOKENS = 1024;
+const PHASE2_MAX_TOKENS = 4096;
 
 const ANALYZER_TOOL = {
   name: "submit_analysis",
   description:
-    "Submit the structured analysis of the founder's startup. Output MUST follow this schema exactly. Every quote must appear verbatim in the SOURCES block.",
+    "Submit the structured YC-Brain analysis. Output MUST follow this schema exactly. Every quote field must appear verbatim in the SOURCES block. Comparables must come from the COMPARABLES block.",
   input_schema: z.toJSONSchema(AnalyzerOutput) as Record<string, unknown>,
 };
 
@@ -36,15 +42,33 @@ function findVerbatimViolations(
 ): string[] {
   const haystack = chunks.map((c) => c.text);
   const violations: string[] = [];
-  for (const key of SECTION_KEYS) {
-    const q = output[key].quote;
+  for (const key of QUESTION_KEYS) {
+    const q = output.questions[key].quote;
     if (!q) continue;
     const found = haystack.some((t) => t.includes(q));
     if (!found) {
-      violations.push(`${key}: quote not found verbatim — "${q.slice(0, 80)}..."`);
+      violations.push(`${key}: quote not found verbatim — "${q.slice(0, 80)}…"`);
     }
   }
   return violations;
+}
+
+// Strip a markdown/code-fence wrapper around a JSON object, if present.
+function extractJsonText(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("```")) {
+    // ```json\n...\n``` or ```\n...\n```
+    const stripped = trimmed.replace(/^```(?:json)?\s*\n?/, "").replace(/```$/, "");
+    return stripped.trim();
+  }
+  // First { to last } — defensive against any leading/trailing prose despite
+  // the prompt forbidding it.
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1);
+  }
+  return trimmed;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -60,15 +84,73 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const form = parsed.data;
 
-  // Per-section retrieval (k=4 each), then dedupe across sections by chunk id.
-  let allChunks: Chunk[];
+  // ---------- PHASE 1: DIAGNOSE ----------
+  let diagnosis: Diagnosis;
   try {
+    const phase1 = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: PHASE1_MAX_TOKENS,
+      system: WORLDVIEW_PROMPT,
+      messages: [{ role: "user", content: buildDiagnosePrompt(form) }],
+    });
+
+    const textBlock = phase1.content.find(
+      (b): b is Anthropic.Messages.TextBlock => b.type === "text",
+    );
+    if (!textBlock) {
+      res.status(502).json({ error: "Phase 1 returned no text block" });
+      return;
+    }
+
+    let json: unknown;
+    try {
+      json = JSON.parse(extractJsonText(textBlock.text));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(502).json({
+        error: "Phase 1 output was not valid JSON",
+        detail: msg,
+        raw: textBlock.text.slice(0, 800),
+      });
+      return;
+    }
+
+    const validated = Diagnosis.safeParse(json);
+    if (!validated.success) {
+      res.status(502).json({
+        error: "Phase 1 diagnosis failed schema validation",
+        detail: validated.error.flatten(),
+        raw: json,
+      });
+      return;
+    }
+    diagnosis = validated.data;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(502).json({ error: "Phase 1 (diagnose) Anthropic call failed", detail: msg });
+    return;
+  }
+
+  // ---------- RETRIEVE ----------
+  let allChunks: Chunk[];
+  let comparables: Awaited<ReturnType<typeof retrieveComparables>>;
+  try {
+    // Per-question canon retrieval: blend the question text, the founder's
+    // answer, the dominant failure mode, and the diagnosis tags.
+    const tagsBlob = diagnosis.retrieval_tags.join(" ");
     const sectionLists = await Promise.all(
-      SECTION_KEYS.map((key: SectionKey) =>
-        retrieveForSection(`${key}: ${form.sections[key]}`, form.stage, 4),
+      QUESTION_KEYS.map((key: QuestionKey) =>
+        retrieveForSection(
+          `${key}: ${form.questions[key]} | failure mode: ${diagnosis.dominant_failure_mode} | tags: ${tagsBlob}`,
+          form.stage,
+          4,
+        ),
       ),
     );
-    allChunks = dedupeChunks(sectionLists);
+    const merged = dedupeChunks(sectionLists);
+
+    comparables = await retrieveComparables(form.stage, diagnosis.retrieval_tags, 4);
+    allChunks = merged;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(502).json({ error: "Retrieval failed", detail: msg });
@@ -80,8 +162,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const baseSystem = buildSystemPrompt(form.stage);
-  const userMessage = buildUserMessage(form, buildSourcesBlock(allChunks));
+  // ---------- PHASE 2: GRADE + WRITE ----------
+  const baseSystem = buildGraderSystemPrompt(form.stage, diagnosis);
+  const userMessage = buildGraderUserMessage(
+    form,
+    diagnosis,
+    buildSourcesBlock(allChunks),
+    buildComparablesBlock(comparables),
+  );
 
   let lastError: string | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -93,7 +181,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       response = await anthropic.messages.create({
         model: MODEL,
-        max_tokens: MAX_TOKENS,
+        max_tokens: PHASE2_MAX_TOKENS,
         system: systemPrompt,
         tools: [ANALYZER_TOOL as Anthropic.Messages.Tool],
         tool_choice: { type: "tool", name: "submit_analysis" },
@@ -101,7 +189,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      res.status(502).json({ error: "Anthropic API error", detail: msg });
+      res.status(502).json({ error: "Phase 2 Anthropic API error", detail: msg });
       return;
     }
 
@@ -129,8 +217,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(200).json({
       output: validated.data,
       meta: {
+        diagnosis,
         chunks_used: allChunks.length,
         sources: Array.from(new Set(allChunks.map((c) => c.source))),
+        comparables_used: comparables.map((c) => c.id),
         attempt,
       },
     });

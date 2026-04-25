@@ -8,7 +8,11 @@
       "Bash(npx tsc *)",
       "Bash(npm uninstall *)",
       "Bash(mkdir -p docs)",
-      "Bash(git mv *)"
+      "Bash(git mv *)",
+      "Bash(gh repo *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X OPTIONS http://localhost:3000/api/analyze)"
     ]
   }
 }
