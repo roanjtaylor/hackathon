@@ -1,0 +1,27 @@
+{
+  "name": "belfast-founders",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scrape:pg": "tsx scripts/scrape-pg.ts",
+    "scrape:ss": "tsx scripts/scrape-startup-school.ts",
+    "build:embeddings": "tsx --env-file=.env.local scripts/build-embeddings.ts"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^28.0.1",
+    "@types/node": "^22.10.0",
+    "@types/turndown": "^5.0.5",
+    "@vercel/node": "^5.7.13",
+    "gray-matter": "^4.0.3",
+    "jsdom": "^25.0.1",
+    "tsx": "^4.19.2",
+    "turndown": "^7.2.0",
+    "typescript": "^5.6.3",
+    "youtube-transcript": "^1.3.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.1",
+    "zod": "^4.3.6"
+  }
+}
