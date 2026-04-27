@@ -1,6 +1,27 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormInput, QuestionKey, Stage } from "./lib/schema.js";
 import { QUESTION_KEYS } from "./lib/schema.js";
+
+// Persist form state across HMR remounts, refreshes, accidental tab closes.
+// Bumping the key version invalidates older saves on a breaking shape change.
+const STORAGE_KEY = "yc-brain-form-v1";
+
+interface SavedForm {
+  startupName: string;
+  oneLiner: string;
+  stage: Stage;
+  questions: FormInput["questions"];
+}
+
+function loadSaved(): SavedForm | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as SavedForm;
+  } catch {
+    return null;
+  }
+}
 
 const STAGES: { value: Stage; label: string }[] = [
   { value: "idea", label: "Idea" },
@@ -70,10 +91,39 @@ type Props = {
 };
 
 export default function Form({ onSubmit, loading }: Props) {
-  const [startupName, setStartupName] = useState("");
-  const [oneLiner, setOneLiner] = useState("");
-  const [stage, setStage] = useState<Stage>("idea");
-  const [questions, setQuestions] = useState<FormInput["questions"]>(EMPTY);
+  const initial = useMemo(loadSaved, []);
+  const [startupName, setStartupName] = useState(initial?.startupName ?? "");
+  const [oneLiner, setOneLiner] = useState(initial?.oneLiner ?? "");
+  const [stage, setStage] = useState<Stage>(initial?.stage ?? "idea");
+  const [questions, setQuestions] = useState<FormInput["questions"]>(
+    initial?.questions ?? EMPTY,
+  );
+  const [savedAt, setSavedAt] = useState<number | null>(initial ? Date.now() : null);
+
+  // Persist on every change. Never auto-clear — even after a successful
+  // submission, the user may want to iterate. They can wipe via the
+  // "Clear saved draft" button below.
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ startupName, oneLiner, stage, questions }),
+      );
+      setSavedAt(Date.now());
+    } catch {
+      // localStorage can be disabled or full; submission still works fine.
+    }
+  }, [startupName, oneLiner, stage, questions]);
+
+  function clearDraft() {
+    if (!confirm("Clear all draft answers? This cannot be undone.")) return;
+    localStorage.removeItem(STORAGE_KEY);
+    setStartupName("");
+    setOneLiner("");
+    setStage("idea");
+    setQuestions(EMPTY);
+    setSavedAt(null);
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -147,9 +197,17 @@ export default function Form({ onSubmit, loading }: Props) {
         </div>
       ))}
 
-      <button type="submit" className="primary" disabled={loading || !allFilled}>
-        {loading ? "Diagnosing…" : "Diagnose with YC knowledge"}
-      </button>
+      <div className="submit-row">
+        <button type="submit" className="primary" disabled={loading || !allFilled}>
+          {loading ? "Diagnosing…" : "Diagnose with YC knowledge"}
+        </button>
+        <span className="hint" aria-live="polite">
+          {savedAt ? "✓ Draft auto-saved locally" : "Draft will be auto-saved as you type"}
+        </span>
+        <button type="button" className="link-button" onClick={clearDraft}>
+          Clear saved draft
+        </button>
+      </div>
     </form>
   );
 }

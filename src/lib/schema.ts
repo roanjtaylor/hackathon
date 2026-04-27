@@ -45,9 +45,9 @@ export type NextAction = z.infer<typeof NextAction>;
 export const Diagnosis = z.object({
   company_shape: z.string().min(1).max(280),
   stage_signals: z.array(z.string().min(1).max(140)).max(12),
-  dominant_failure_mode: z.string().min(1).max(200),
+  dominant_failure_mode: z.string().min(1).max(400),
   anti_patterns_suspected: z.array(z.string().min(1).max(200)).max(8),
-  the_one_thing: z.string().min(1).max(280),
+  the_one_thing: z.string().min(1).max(500),
   retrieval_tags: z.array(z.string().min(1).max(60)).min(1).max(12),
 });
 export type Diagnosis = z.infer<typeof Diagnosis>;

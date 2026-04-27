@@ -12,6 +12,7 @@ import {
   type QuestionKey,
 } from "../src/lib/schema.js";
 import {
+  VOICE_ANCHORS,
   WORLDVIEW_PROMPT,
   buildComparablesBlock,
   buildDiagnosePrompt,
@@ -30,7 +31,11 @@ import {
 
 const MODEL = "claude-sonnet-4-6";
 const PHASE1_MAX_TOKENS = 1024;
-const PHASE2_MAX_TOKENS = 4096;
+// 4096 was hitting truncation: the model wrote 6 question analyses + headline
+// + comparables and ran out of budget before the final prescribed_reading
+// field, causing schema validation to fail on missing required fields.
+// Sonnet 4.6 supports far higher; 8192 leaves comfortable headroom.
+const PHASE2_MAX_TOKENS = 8192;
 
 const ANALYZER_TOOL = {
   name: "submit_analysis",
@@ -95,16 +100,53 @@ function computeOverall(
   return { score: avg, band, breakdown };
 }
 
+// Normalize text for the verbatim check. The corpus contains YouTube
+// auto-transcripts (e.g. Thiel's "Competition is for Losers") with
+// filler words ("uh", "um") and stuttered repeats like "they're often
+// they're often very hard to". A clean model quote will drop these,
+// so we strip them on both sides before substring matching. This is
+// not paraphrase tolerance — it only collapses ASR noise. Substantive
+// rewording still fails the check.
+function normalizeForQuoteCheck(s: string): string {
+  let n = s
+    .toLowerCase()
+    // Strip markdown italic/bold markers BEFORE the word-char regex below.
+    // Underscore is in \w, so without this the source's "_never_" stays as
+    // "_never_" while the model's clean "never" doesn't match.
+    .replace(/[_*`~]/g, " ")
+    .replace(/\b(uh+|um+|er+|hmm+)\b/gi, " ")
+    .replace(/[^\w\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Collapse immediately-repeated 1–5-word sequences to handle ASR
+  // stutters: "they re often they re often very" → "they re often very".
+  // Iterate until stable so cascading repeats also collapse.
+  let prev = "";
+  while (prev !== n) {
+    prev = n;
+    n = n.replace(/\b(\w+(?:\s+\w+){0,4})\s+\1\b/g, "$1");
+  }
+  return n;
+}
+
 function findVerbatimViolations(
   output: ReturnType<typeof AnalyzerOutput.parse>,
   chunks: Chunk[],
 ): string[] {
-  const haystack = chunks.map((c) => c.text);
+  // VOICE_ANCHORS are real PG passages quoted in the system prompt for tone
+  // calibration. The model can legitimately cite them; without including
+  // them in the haystack, valid citations fail this check whenever the
+  // corresponding chunk wasn't retrieved for that question.
+  const haystack = [
+    ...chunks.map((c) => c.text),
+    VOICE_ANCHORS,
+  ].map(normalizeForQuoteCheck);
   const violations: string[] = [];
   for (const key of QUESTION_KEYS) {
     const q = output.questions[key].quote;
     if (!q) continue;
-    const found = haystack.some((t) => t.includes(q));
+    const qNorm = normalizeForQuoteCheck(q);
+    const found = haystack.some((t) => t.includes(qNorm));
     if (!found) {
       violations.push(`${key}: quote not found verbatim — "${q.slice(0, 80)}…"`);
     }
