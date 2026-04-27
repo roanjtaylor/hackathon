@@ -18,11 +18,13 @@ import {
   buildGraderSystemPrompt,
   buildGraderUserMessage,
   buildSourcesBlock,
+  buildYcCohortBlock,
 } from "../src/lib/prompts.js";
 import {
   dedupeChunks,
   retrieveComparables,
   retrieveForSection,
+  retrieveYcCohort,
   type Chunk,
 } from "../src/lib/retrieval.js";
 
@@ -191,6 +193,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // ---------- RETRIEVE ----------
   let allChunks: Chunk[];
   let comparables: Awaited<ReturnType<typeof retrieveComparables>>;
+  let ycCohort: Awaited<ReturnType<typeof retrieveYcCohort>>;
   try {
     // Per-question canon retrieval: blend the question text, the founder's
     // answer, the dominant failure mode, and the diagnosis tags.
@@ -207,6 +210,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const merged = dedupeChunks(sectionLists);
 
     comparables = await retrieveComparables(form.stage, diagnosis.retrieval_tags, 4);
+    ycCohort = await retrieveYcCohort(
+      form.one_liner,
+      diagnosis.retrieval_tags,
+      diagnosis.company_shape,
+    );
     allChunks = merged;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -226,6 +234,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     diagnosis,
     buildSourcesBlock(allChunks),
     buildComparablesBlock(comparables),
+    buildYcCohortBlock(ycCohort),
   );
 
   let lastError: string | null = null;
@@ -287,6 +296,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         chunks_used: allChunks.length,
         sources: Array.from(new Set(allChunks.map((c) => c.source))),
         comparables_used: comparables.map((c) => c.id),
+        yc_cohort: {
+          query_terms: ycCohort.query_terms,
+          mature_only: ycCohort.mature_only,
+          stats: ycCohort.stats,
+          representatives: ycCohort.representatives.map((r) => ({
+            name: r.name,
+            slug: r.slug,
+            batch: r.batch,
+            status: r.status,
+            top_company: r.top_company,
+            one_liner: r.one_liner,
+            website: r.website,
+          })),
+        },
         attempt,
       },
     });

@@ -12,7 +12,15 @@
       "Bash(gh repo *)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X OPTIONS http://localhost:3000/api/analyze)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X OPTIONS http://localhost:3000/api/analyze)",
+      "Bash(curl -s -o /tmp/yc.html -w \"%{http_code}\\\\n\" \"https://www.ycombinator.com/companies\")",
+      "Read(//tmp/**)",
+      "Bash(curl -sL -o /c/Users/roanj/Hackathon/scripts/.yc-probe.html -w \"%{http_code}\\\\n\" \"https://www.ycombinator.com/companies\")",
+      "PowerShell($r = Invoke-WebRequest -Uri \"https://www.ycombinator.com/companies\" -UseBasicParsing; $r.StatusCode; $r.RawContentLength)",
+      "PowerShell(Out-File *)",
+      "Bash(npx tsx -e ' *)",
+      "Bash(npx tsx *)",
+      "PowerShell(Resolve-DnsName *)"
     ]
   }
 }

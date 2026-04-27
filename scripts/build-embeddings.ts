@@ -44,13 +44,51 @@ function cleanMarkdown(md: string): string {
     .trim();
 }
 
+// Split an oversized paragraph (e.g. a YouTube auto-transcript with no
+// blank-line breaks) into sentence-grouped pieces of ~TARGET_CHARS. Keeps
+// sentences intact; only used when one paragraph blows past TARGET_CHARS on
+// its own. Without this, transcripts like Thiel's "Competition is for Losers"
+// land as a single 50K-char chunk and become unretrievable.
+function splitOversizedParagraph(p: string): string[] {
+  if (p.length <= TARGET_CHARS) return [p];
+
+  // First try: sentence boundaries. Works for normal prose.
+  const sentences = p
+    .split(/(?<=[.?!])\s+(?=[A-Za-z])/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  // If sentence-split didn't actually break the paragraph (e.g. an
+  // unpunctuated YouTube auto-transcript), fall back to hard splits at the
+  // nearest word boundary every ~TARGET_CHARS.
+  const tokens = sentences.length > 1 ? sentences : p.split(/\s+/);
+  const sep = sentences.length > 1 ? " " : " ";
+
+  const out: string[] = [];
+  let buf: string[] = [];
+  let bufLen = 0;
+  for (const s of tokens) {
+    if (bufLen + s.length > TARGET_CHARS && bufLen >= MIN_CHARS) {
+      out.push(buf.join(sep));
+      buf = [s];
+      bufLen = s.length;
+    } else {
+      buf.push(s);
+      bufLen += s.length + 1;
+    }
+  }
+  if (buf.length > 0) out.push(buf.join(sep));
+  return out;
+}
+
 // Group paragraphs (split on blank lines) into chunks of roughly TARGET_CHARS.
-// Doesn't split paragraphs — if one is huge, it becomes its own chunk.
+// Oversized paragraphs are sentence-split via splitOversizedParagraph.
 function chunkBody(body: string): string[] {
   const paragraphs = cleanMarkdown(body)
     .split(/\n{2,}/)
     .map((p) => p.trim())
-    .filter((p) => p.length > 0);
+    .filter((p) => p.length > 0)
+    .flatMap(splitOversizedParagraph);
 
   const chunks: string[] = [];
   let buf: string[] = [];

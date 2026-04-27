@@ -6,6 +6,9 @@
   "scripts": {
     "scrape:pg": "tsx scripts/scrape-pg.ts",
     "scrape:ss": "tsx scripts/scrape-startup-school.ts",
+    "scrape:yc": "tsx scripts/scrape-yc-companies.ts",
+    "yc:stats": "tsx scripts/yc-stats.ts",
+    "yc:by-category": "tsx scripts/yc-by-category.ts",
     "build:embeddings": "tsx --env-file=.env.local scripts/build-embeddings.ts",
     "test:analyze": "tsx scripts/test-analyze.ts",
     "dev:api": "tsx --env-file=.env.local scripts/dev-server.ts",
